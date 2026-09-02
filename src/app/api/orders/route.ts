@@ -67,6 +67,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Guard for TypeScript's control-flow analysis (and as a real
+  // runtime safety net) — every path above either returns early or
+  // assigns a non-null customer, but the compiler can't fully verify
+  // that through the try/catch above.
+  if (!customer) {
+    return NextResponse.json({ error: "customer_creation_failed" }, { status: 500 });
+  }
+
   const subtotal = items.reduce((sum, i) => sum + i.unit_price * i.quantity, 0);
   const pointsEarned = Math.floor(subtotal * POINTS_PER_YEN);
 
