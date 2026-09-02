@@ -28,8 +28,8 @@ async function main() {
     console.log("");
   }
 
-  const envVal = process.env.NEXT_PUBLIC_LINE_OA_ID ?? "";
-  console.log(`.env.local NEXT_PUBLIC_LINE_OA_ID: ${JSON.stringify(envVal)}`);
+  const envVal = process.env.LINE_OA_ID ?? "";
+  console.log(`.env.local LINE_OA_ID: ${JSON.stringify(envVal)}`);
   console.log(`    (length ${envVal.length}, char codes: [${[...envVal].map(c => c.charCodeAt(0)).join(",")}])`);
 
   const match = all.find((s) => s.line_official_account_id === envVal);

@@ -162,7 +162,7 @@ async function main() {
   }
 
   console.log("\nDone.");
-  console.log(`STORE_ID for .env.local / NEXT_PUBLIC_STORE_ID / LINE_STORE_ID: ${store.id}`);
+  console.log(`Store id: ${store.id} (for reference only — the app resolves this automatically via LINE_OA_ID, nothing to copy into .env.local).`);
 }
 
 main().catch((err) => {

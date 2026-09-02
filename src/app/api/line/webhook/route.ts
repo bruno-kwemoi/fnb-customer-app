@@ -5,13 +5,16 @@ import { resolveStoreIdServer } from "@/lib/store";
 
 // This route handles the CUSTOMER-FACING LINE Official Account webhook.
 // Configure this URL in the LINE Developers console under that channel's
-// Messaging API settings (one webhook per store/channel).
+// Messaging API settings (one webhook per store/channel):
+//   https://<your-domain>/api/line/webhook
 //
-// NOTE: which store this webhook belongs to needs to be resolvable per
-// request. Simplest approach for a single-store pilot: hardcode via
-// LINE_STORE_ID env var. For true multi-tenant (multiple restaurant
-// clients / multiple LINE channels), route by destination channel ID
-// in the payload instead — see comment below.
+// Store resolution: resolveStoreIdServer() looks up the `stores`
+// record by LINE_OA_ID (env var) — see src/lib/store.ts. That's a
+// single fixed store per deployment. For true multi-tenant (several
+// restaurant clients sharing one deployment), resolve per-request from
+// the webhook payload's `destination` field instead, matched against
+// a stored channel identifier — LINE_OA_ID alone can't distinguish
+// between channels on one deployment.
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
@@ -25,10 +28,21 @@ export async function POST(req: NextRequest) {
   }
 
   const body = JSON.parse(rawBody);
+  const events = body.events ?? [];
+
+  // LINE's "Verify" button in the console sends a request with an
+  // empty events array just to check for a 200. Bail out before doing
+  // any PocketBase work — no need to authenticate as admin for a
+  // no-op, and this keeps the response fast enough to avoid LINE's
+  // webhook timeout.
+  if (events.length === 0) {
+    return NextResponse.json({ ok: true });
+  }
+
   const pb = await getAdminPocketBase();
   const storeId = await resolveStoreIdServer(pb);
 
-  for (const event of body.events ?? []) {
+  for (const event of events) {
     try {
       if (event.type === "follow") {
         await handleFollow(pb, storeId, channelAccessToken, event);

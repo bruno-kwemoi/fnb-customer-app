@@ -1,16 +1,16 @@
-import { getPocketBase, getAdminPocketBase } from "./pocketbase";
+import { getAdminPocketBase } from "./pocketbase";
 
-// Resolves the `stores` record by its LINE OA ID — a value you already
-// have from the LINE Developers console and that never changes,
-// rather than the PocketBase-generated record ID (which only exists
-// after seeding and has to be copied into env vars by hand).
+// Resolves the current store's id.
 //
-// Client-side (LIFF pages): call resolveStoreId(). Cached in
-// sessionStorage after the first lookup so it's one extra request per
-// session, not per page.
+// The `stores` collection is intentionally admin-only in PocketBase
+// (it holds the LINE channel secret and access token — those must
+// never be readable from the browser), so the client can't query it
+// directly. Client-side resolveStoreId() instead calls a server route
+// (/api/store) that does the lookup with an authenticated admin
+// client and returns only the id.
 //
-// Server-side (webhook, API routes): call resolveStoreIdServer(pb)
-// with an already-authenticated admin PocketBase client.
+// Server-side code (webhook, API routes) that already has an admin
+// client can skip that hop and call resolveStoreIdServer() directly.
 
 let cachedStoreId: string | null = null;
 
@@ -25,30 +25,18 @@ export async function resolveStoreId(): Promise<string> {
     }
   }
 
-  const lineOaId = process.env.NEXT_PUBLIC_LINE_OA_ID;
-  if (!lineOaId) throw new Error("NEXT_PUBLIC_LINE_OA_ID is not set");
-
-  const pb = getPocketBase();
-  let store;
-  try {
-    store = await pb
-      .collection("stores")
-      .getFirstListItem(`line_official_account_id="${lineOaId}"`);
-  } catch (err) {
-    // Surface the actual value this bundle is using — if this doesn't
-    // match what's in .env.local / the PocketBase record, the client
-    // bundle is stale and needs a real rebuild (stop the dev server,
-    // delete .next, restart), not just a page refresh.
-    throw new Error(
-      `Store lookup failed for NEXT_PUBLIC_LINE_OA_ID=${JSON.stringify(lineOaId)} (length ${lineOaId.length}). Original error: ${err instanceof Error ? err.message : String(err)}`
-    );
+  const res = await fetch("/api/store");
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Store lookup failed (${res.status}): ${body}`);
   }
+  const data = await res.json();
 
-  cachedStoreId = store.id;
+  cachedStoreId = data.id;
   if (typeof window !== "undefined") {
-    sessionStorage.setItem("store_id", store.id);
+    sessionStorage.setItem("store_id", data.id);
   }
-  return store.id;
+  return data.id;
 }
 
 export async function resolveStoreIdServer(
