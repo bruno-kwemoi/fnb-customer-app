@@ -50,6 +50,12 @@ export default function CartPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           lineUserId: profile.userId,
+          // Sent so /api/orders can create the customer record on the
+          // fly if this is a pre-existing LINE friend whose `follow`
+          // webhook event fired before this app's webhook existed (so
+          // no customers row was ever created for them).
+          displayName: profile.displayName,
+          pictureUrl: profile.pictureUrl,
           storeId,
           orderType,
           tableNumber: orderType === "dine_in" ? tableNumber : undefined,
@@ -57,14 +63,22 @@ export default function CartPage() {
         }),
       });
 
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? `http_${res.status}`);
+      }
       const data = await res.json();
 
       sessionStorage.removeItem("cart");
       setConfirmed({ pointsEarned: data.pointsEarned });
     } catch (err) {
       console.error(err);
-      alert("注文の送信に失敗しました。もう一度お試しください。");
+      const code = err instanceof Error ? err.message : "";
+      const message =
+        code === "customer_creation_failed"
+          ? "お客様情報の登録に失敗しました。時間をおいてもう一度お試しください。"
+          : "注文の送信に失敗しました。もう一度お試しください。";
+      alert(message);
     } finally {
       setSubmitting(false);
     }
