@@ -92,12 +92,20 @@ export default function CartPage() {
         <p className="text-sm text-neutral-500 mb-4">
           {confirmed.pointsEarned}pt 獲得しました。LINEに確認メッセージを送信しました。
         </p>
-        <button
-          onClick={closeLiffWindow}
-          className="rounded-xl bg-neutral-900 text-white text-sm font-bold px-6 py-3"
-        >
-          閉じる
-        </button>
+        <div className="flex flex-col gap-2 items-center">
+          <button
+            onClick={() => router.push("/liff/orders")}
+            className="rounded-xl border border-neutral-300 text-neutral-700 text-sm font-bold px-6 py-3"
+          >
+            注文状況を確認する
+          </button>
+          <button
+            onClick={closeLiffWindow}
+            className="rounded-xl bg-neutral-900 text-white text-sm font-bold px-6 py-3"
+          >
+            閉じる
+          </button>
+        </div>
       </div>
     );
   }

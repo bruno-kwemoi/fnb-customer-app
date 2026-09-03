@@ -68,3 +68,18 @@ export interface OrderItem {
   quantity: number;
   notes?: string;
 }
+
+// Flattened shape returned by /api/staff/orders and /api/customer/orders
+// — server routes translate PocketBase records into this so neither
+// page needs to know PocketBase's field-naming conventions.
+export interface OrderSummary {
+  id: string;
+  status: Order["status"];
+  orderType: Order["order_type"];
+  tableNumber?: string;
+  items: OrderItem[];
+  subtotal: number;
+  pointsEarned: number;
+  created: string;
+  customerName?: string; // present on the staff view only
+}

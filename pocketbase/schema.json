@@ -163,7 +163,7 @@
         "id": "fcsort0001",
         "name": "sort_order",
         "type": "number",
-        "required": true,
+        "required": false,
         "presentable": false,
         "unique": false,
         "options": {
@@ -266,7 +266,7 @@
         "id": "fiprice001",
         "name": "price",
         "type": "number",
-        "required": true,
+        "required": false,
         "presentable": false,
         "unique": false,
         "options": {
@@ -316,7 +316,7 @@
         "id": "fisort0001",
         "name": "sort_order",
         "type": "number",
-        "required": true,
+        "required": false,
         "presentable": false,
         "unique": false,
         "options": {
@@ -402,7 +402,7 @@
         "id": "fupoints001",
         "name": "loyalty_points",
         "type": "number",
-        "required": true,
+        "required": false,
         "presentable": false,
         "unique": false,
         "options": {
@@ -544,7 +544,7 @@
         "id": "fosubtot001",
         "name": "subtotal",
         "type": "number",
-        "required": true,
+        "required": false,
         "presentable": false,
         "unique": false,
         "options": {
@@ -558,7 +558,7 @@
         "id": "foearned001",
         "name": "points_earned",
         "type": "number",
-        "required": true,
+        "required": false,
         "presentable": false,
         "unique": false,
         "options": {
@@ -572,7 +572,7 @@
         "id": "foused00001",
         "name": "points_used",
         "type": "number",
-        "required": true,
+        "required": false,
         "presentable": false,
         "unique": false,
         "options": {

@@ -16,6 +16,19 @@ plan; nothing here assumes one or the other.
 - **Cart & checkout** (`/liff/cart`) — quantity editing, dine-in/takeout
   toggle, table number capture, order submission.
 - **Loyalty** (`/liff/loyalty`) — points balance + tier display.
+- **Order tracking** (`/liff/orders`) — customer-facing order history +
+  live status, linked from the post-checkout confirmation screen.
+  Polls `/api/customer/orders` every 8s while an order is still active
+  (pending/confirmed/preparing/ready); stops polling once everything
+  shown is completed/cancelled.
+- **Staff order dashboard** (`/staff/orders`) — passcode-gated list of
+  a store's orders, oldest-active-first, with one-tap status advance
+  (pending → confirmed → preparing → ready → completed) and cancel.
+  Polls `/api/staff/orders` every 6s. Advancing a status pushes a LINE
+  message to the customer (see `STATUS_MESSAGES` in
+  `/api/staff/orders/[id]/route.ts`) — a push failure never fails the
+  status update itself, same non-blocking pattern as the order
+  confirmation push in `/api/orders`.
 - **Root redirect** (`/`) — resolves LIFF's `liff.state` deep-link
   param and routes to the right page. Required by LIFF itself — see
   Architecture notes below.
@@ -83,25 +96,41 @@ for this to work at all.
    contents → Review → Confirm. (Format matches PocketBase 0.22's
    import API. If your instance is later upgraded to 0.23+, convert to
    the newer `fields` format before re-importing.)
-3. **Set API rules on `menu_categories` and `menu_items`** — this step
+3. **Uncheck "Required" on number fields that can legitimately be `0`**
+   — `customers.loyalty_points`, `orders.points_used`,
+   `orders.points_earned`, `orders.subtotal`, `menu_items.price`,
+   `menu_categories.sort_order`, `menu_items.sort_order`. This
+   PocketBase version (0.22.x) treats `0` on a `required` number
+   field as if it were empty and rejects the write with a 400 — even
+   though `0` is a valid value with `min: 0` already enforcing
+   non-negativity. Not covered by schema import on existing
+   collections (same caveat as the API rules below) — edit each field
+   in the Admin UI directly. Hits hardest on `orders.points_used`,
+   which is currently always `0` (redemption isn't built yet) — every
+   order create will 400 until this is unchecked.
+4. **Set API rules on `menu_categories` and `menu_items`** — this step
    is not covered by the schema import if those collections already
    existed before you imported this schema (PocketBase import doesn't
    retroactively update rules on existing collections). In the Admin
    UI, open each collection's settings and set both List rule and View
    rule to empty (public). Leave `stores`, `customers`, and `orders`
    as admin-only.
-4. Run `npm install`, then `npm run seed` to create the store + starter
+5. **Set `STAFF_ACCESS_CODE`** in `.env.local` to whatever passcode
+   staff will use at `/staff/orders`. There's no default — the
+   dashboard rejects every request if this is unset (see
+   `src/lib/staff-auth.ts`).
+6. Run `npm install`, then `npm run seed` to create the store + starter
    menu (safe to re-run — matches by name and updates in place rather
    than duplicating).
-5. In the LINE Developers console: set the webhook URL to
+7. In the LINE Developers console: set the webhook URL to
    `https://<your-domain>/api/line/webhook` (the full path — a common
    mistake is pointing it at just `/webhook` or the domain root). Set
    the LIFF app's Endpoint URL to your domain root (`https://<your-domain>/`).
-6. Run `npm run setup-rich-menu` to create and publish the Rich Menu.
+8. Run `npm run setup-rich-menu` to create and publish the Rich Menu.
    Re-run any time you edit `assets/rich-menu.png` or the tap areas in
    the script — it replaces the existing menu rather than stacking a
    new one.
-7. If deploying (e.g. Netlify): set every var from `.env.local` in the
+9. If deploying (e.g. Netlify): set every var from `.env.local` in the
    host's environment variable settings too. Adding/changing them
    after a build won't take effect until the next deploy — trigger one
    manually if needed.
@@ -123,7 +152,21 @@ for this to work at all.
   `lineUserId` the client sends rather than verifying it against the
   LIFF ID token server-side. Fine for a pilot; worth hardening (via
   `liff.getIDToken()` + LINE's token verify endpoint) before wider
-  rollout.
+  rollout. `/api/customer/orders` has the same trust caveat.
+- **Real staff accounts** — `/staff/orders` is gated by one shared
+  passcode (`STAFF_ACCESS_CODE`), not per-staff logins. No identity,
+  no audit trail of who changed a status, no roles (e.g. kitchen vs.
+  front-of-house). Fine for one tablet at one counter; replace with a
+  PocketBase auth collection before more than a couple of people share
+  it.
+- **Realtime order updates** — both the staff dashboard and customer
+  tracking screen poll on an interval (6s / 8s) rather than subscribing
+  to PocketBase's realtime API. Simpler to reason about and works fine
+  for a pilot's order volume; the natural upgrade is a PocketBase
+  realtime subscription once there's a real staff auth collection to
+  authenticate the subscription as (the `orders` collection is
+  intentionally admin-only, so an anonymous browser client can't
+  subscribe to it directly today).
 
 ## Open question to confirm before more building
 
