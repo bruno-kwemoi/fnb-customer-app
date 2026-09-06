@@ -21,6 +21,15 @@ type State =
   | { phase: "error"; message: string }
   | { phase: "ready"; idToken: string };
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms — see below for likely causes.`)), ms)
+    ),
+  ]);
+}
+
 export default function StaffLiffOrdersPage() {
   const [state, setState] = useState<State>({ phase: "loading" });
 
@@ -33,7 +42,16 @@ export default function StaffLiffOrdersPage() {
           throw new Error("NEXT_PUBLIC_STAFF_LIFF_ID is not set in this deployment's environment.");
         }
 
-        const [profile, idToken] = await Promise.all([getLineProfile(liffId), getLineIdToken(liffId)]);
+        // liff.init() can hang indefinitely rather than reject — e.g.
+        // when opened outside LINE's in-app browser, or when
+        // third-party storage is blocked mid-login-redirect. Without
+        // this, that hang is indistinguishable from a slow network to
+        // the person staring at a spinner forever.
+        const [profile, idToken] = await withTimeout(
+          Promise.all([getLineProfile(liffId), getLineIdToken(liffId)]),
+          10000,
+          "LINE login"
+        );
         if (cancelled) return;
 
         if (!idToken) {
@@ -44,9 +62,11 @@ export default function StaffLiffOrdersPage() {
         // Check once up front so an unregistered person sees a useful
         // "here's your ID, ask your manager" screen instead of the
         // dashboard silently failing to load anything.
-        const res = await fetch("/api/staff/orders?status=all", {
-          headers: { "x-staff-id-token": idToken },
-        });
+        const res = await withTimeout(
+          fetch("/api/staff/orders?status=all", { headers: { "x-staff-id-token": idToken } }),
+          10000,
+          "Staff check request"
+        );
         if (cancelled) return;
 
         if (res.status === 401) {
@@ -79,9 +99,11 @@ export default function StaffLiffOrdersPage() {
     return (
       <div className="p-6 text-sm text-neutral-600">
         <p className="font-bold mb-2">読み込みに失敗しました</p>
-        <p className="mb-3">
-          LINEアプリ内でこのリンクを開いているか確認してください。ブラウザで直接開いた場合は正しく動作しません。
-        </p>
+        <ul className="list-disc pl-5 mb-3 space-y-1">
+          <li>LINEアプリ内でこのリンクを開いていますか？（外部ブラウザでは動作しません）</li>
+          <li>LIFFアプリのEndpoint URLはドメインのみ（パスなし）に設定されていますか？</li>
+          <li>デプロイ後の環境変数（NEXT_PUBLIC_STAFF_LIFF_ID など）は最新のデプロイに反映されていますか？</li>
+        </ul>
         <p className="text-xs text-neutral-400 font-mono break-all">{state.message}</p>
       </div>
     );
