@@ -70,6 +70,17 @@ async function handleFollow(
   const lineUserId = event.source?.userId;
   if (!lineUserId) return;
 
+  // Staff/admin friending this same OA (see the "same OA" staff
+  // access setup in README) shouldn't get turned into a customer
+  // record with a welcome message meant for diners — check the staff
+  // collection first and bail out if they're already registered
+  // there.
+  const staffRecord = await pb
+    .collection("staffs")
+    .getFirstListItem(`line_user_id="${lineUserId}"`)
+    .catch(() => null);
+  if (staffRecord) return;
+
   const existing = await pb
     .collection("customers")
     .getFirstListItem(`line_user_id="${lineUserId}"`)

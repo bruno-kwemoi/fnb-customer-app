@@ -24,9 +24,9 @@ if (!TOKEN || !LIFF_ID) {
 
 const API = "https://api.line.me/v2/bot";
 
-// Two tap areas matching assets/rich-menu.png (2500x843, split down
-// the middle). Edit both the image and these areas together if you
-// change the layout.
+// Three tap areas matching assets/rich-menu.png (2500x843, split into
+// three equal columns). Edit both the image and these areas together
+// if you change the layout.
 const richMenuDefinition = {
   size: { width: 2500, height: 843 },
   selected: true,
@@ -34,11 +34,15 @@ const richMenuDefinition = {
   chatBarText: "メニュー",
   areas: [
     {
-      bounds: { x: 0, y: 0, width: 1250, height: 843 },
+      bounds: { x: 0, y: 0, width: 833, height: 843 },
       action: { type: "uri", uri: `https://liff.line.me/${LIFF_ID}/liff/menu` },
     },
     {
-      bounds: { x: 1250, y: 0, width: 1250, height: 843 },
+      bounds: { x: 833, y: 0, width: 834, height: 843 },
+      action: { type: "uri", uri: `https://liff.line.me/${LIFF_ID}/liff/orders` },
+    },
+    {
+      bounds: { x: 1667, y: 0, width: 833, height: 843 },
       action: { type: "uri", uri: `https://liff.line.me/${LIFF_ID}/liff/loyalty` },
     },
   ],
@@ -59,7 +63,10 @@ async function lineFetch(path, options = {}) {
 async function main() {
   console.log("Checking for existing rich menus...");
   const { richmenus } = await lineFetch("/richmenu/list");
-  for (const rm of richmenus) {
+  // Only remove rich menus THIS script created (matched by name) —
+  // a staff rich menu (see setup-staff-rich-menu.mjs) can coexist on
+  // the same channel now and must not get swept up here.
+  for (const rm of richmenus.filter((r) => r.name === richMenuDefinition.name)) {
     console.log(`  deleting existing rich menu ${rm.richMenuId} ("${rm.name}")`);
     await lineFetch(`/richmenu/${rm.richMenuId}`, { method: "DELETE" });
   }

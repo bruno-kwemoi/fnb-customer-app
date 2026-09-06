@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "next lint",
     "seed": "node scripts/seed.mjs",
-    "setup-rich-menu": "node scripts/setup-rich-menu.mjs"
+    "setup-rich-menu": "node scripts/setup-rich-menu.mjs",
+    "setup-staff-rich-menu": "node scripts/setup-staff-rich-menu.mjs",
+    "add-staff": "node scripts/add-staff.mjs"
   },
   "dependencies": {
     "@line/liff": "^2.24.0",

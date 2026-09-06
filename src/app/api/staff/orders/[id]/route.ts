@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminPocketBase } from "@/lib/pocketbase";
-import { verifyStaffCode } from "@/lib/staff-auth";
+import { resolveStaffIdentity } from "@/lib/staff-auth";
 import { pushLineMessage } from "@/lib/line";
 
 const VALID_STATUSES = ["pending", "confirmed", "preparing", "ready", "completed", "cancelled"];
@@ -18,7 +18,10 @@ const STATUS_MESSAGES: Record<string, string> = {
 
 // PATCH /api/staff/orders/:id  { status: "confirmed" }
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  if (!verifyStaffCode(req)) {
+  const pb = await getAdminPocketBase();
+
+  const staff = await resolveStaffIdentity(req, pb);
+  if (!staff) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -29,8 +32,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: "invalid_status" }, { status: 400 });
   }
 
-  const pb = await getAdminPocketBase();
-
   let updated;
   try {
     updated = await pb.collection("orders").update(params.id, { status });
@@ -38,6 +39,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     console.error(`[staff/orders/${params.id}] status update failed`, err);
     return NextResponse.json({ error: "update_failed" }, { status: 500 });
   }
+
+  console.log(
+    `[staff/orders/${params.id}] status -> ${status} by ${staff.kind === "line" ? staff.displayName : "shared device"}`
+  );
 
   // The status change is already committed at this point — a LINE
   // push failure (expired token, rate limit, transient error) must

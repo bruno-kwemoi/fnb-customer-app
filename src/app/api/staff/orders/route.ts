@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminPocketBase } from "@/lib/pocketbase";
 import { resolveStoreIdServer } from "@/lib/store";
-import { verifyStaffCode } from "@/lib/staff-auth";
+import { resolveStaffIdentity } from "@/lib/staff-auth";
 import type { OrderSummary } from "@/types";
 
 const VALID_STATUSES = ["pending", "confirmed", "preparing", "ready", "completed", "cancelled"];
@@ -9,7 +9,10 @@ const VALID_STATUSES = ["pending", "confirmed", "preparing", "ready", "completed
 // GET /api/staff/orders?status=pending — lists this store's orders,
 // newest first. `status` omitted or "all" returns everything.
 export async function GET(req: NextRequest) {
-  if (!verifyStaffCode(req)) {
+  const pb = await getAdminPocketBase();
+
+  const staff = await resolveStaffIdentity(req, pb);
+  if (!staff) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -19,7 +22,6 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const pb = await getAdminPocketBase();
     const storeId = await resolveStoreIdServer(pb);
 
     const filter =
@@ -45,7 +47,10 @@ export async function GET(req: NextRequest) {
       customerName: o.expand?.customer?.display_name ?? "不明",
     }));
 
-    return NextResponse.json({ orders });
+    return NextResponse.json({
+      orders,
+      staff: staff.kind === "line" ? { displayName: staff.displayName, role: staff.role } : null,
+    });
   } catch (err) {
     console.error("[staff/orders] list failed", err);
     return NextResponse.json({ error: "list_failed" }, { status: 500 });

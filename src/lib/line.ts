@@ -44,6 +44,38 @@ export async function pushLineMessage(
 }
 
 /**
+ * Verifies a LIFF ID token server-side and returns the real, LINE-
+ * confirmed userId it belongs to. Used for the staff/admin LINE
+ * access flow specifically — unlike the customer flow (which trusts
+ * whatever lineUserId the client sends, a documented, accepted
+ * shortcut for a pilot), staff actions change real order state, so
+ * a client claiming to be a given userId isn't good enough; this
+ * confirms it against LINE directly.
+ *
+ * Requires "ID token" to be enabled for the LIFF app in the LINE
+ * Developers Console (LIFF apps > your app > ID token: ON) — without
+ * it, liff.getIDToken() returns null client-side and there's nothing
+ * to verify here.
+ */
+export async function verifyLineIdToken(idToken: string): Promise<{ userId: string }> {
+  const clientId = process.env.LINE_CHANNEL_ID;
+  if (!clientId) throw new Error("LINE_CHANNEL_ID is not set");
+
+  const res = await fetch("https://api.line.me/oauth2/v2.1/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ id_token: idToken, client_id: clientId }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`ID token verification failed (${res.status}): ${await res.text()}`);
+  }
+
+  const data = (await res.json()) as { sub: string; exp: number; aud: string };
+  return { userId: data.sub };
+}
+
+/**
  * Fetches a LINE user's profile (display name, picture) server-side —
  * used on follow events to seed the customer record.
  */
