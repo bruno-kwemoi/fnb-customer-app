@@ -42,6 +42,22 @@ plan; nothing here assumes one or the other.
   customer (see `STATUS_MESSAGES` in `/api/staff/orders/[id]/route.ts`)
   — a push failure never fails the status update itself, same
   non-blocking pattern as the order confirmation push in `/api/orders`.
+- **Admin reports** (`/staff/liff/reports`) — sales (revenue, order
+  count, avg order value, points issued, unique customers, top items,
+  dine-in/takeout split) and staff activity (status-change counts per
+  person) over a picked date range. Admin-only — the shared tablet
+  passcode is deliberately **not** accepted here (see
+  `/api/admin/reports/route.ts`), only LINE identity with
+  `role: "admin"` in `staffs`. A "レポート" link appears in the staff
+  dashboard header for admins only (`staffRole === "admin"` check in
+  `OrdersDashboard.tsx`); staff without that role never see it, and
+  hitting the URL directly still 401s server-side either way.
+
+  Staff activity depends on a new `order_status_log` collection that
+  `PATCH /api/staff/orders/[id]` now writes to (best-effort, same
+  non-blocking pattern as the LINE push) — every status change before
+  this collection existed has no record, so reports only cover
+  activity from whenever you import the updated schema onward.
 - **Root redirect** (`/`) — resolves LIFF's `liff.state` deep-link
   param and routes to the right page. Required by LIFF itself — see
   Architecture notes below.
@@ -183,6 +199,17 @@ was built from; this assumes the **same OA** as customers.
    `STAFF_RICH_MENU_ID` is set) links the staff Rich Menu to their
    LINE account, so they see it instead of the customer menu going
    forward.
+
+### Setup: admin reports (if you already set up staff LINE access above)
+
+Just one step: re-import `pocketbase/schema.json` — it now also
+defines `order_status_log` (admin-only, same as `staffs`/`orders`).
+Since this is a brand-new collection rather than a change to an
+existing one, this re-import is a plain create, not a merge — the
+"field type cannot be changed" situation from earlier only applies
+when editing fields on a collection that already exists. No other
+setup needed; `role: "admin"` on an existing `staffs` record is
+enough to see the "レポート" link and reach `/staff/liff/reports`.
 
 ## Deliberately out of scope for this pass
 

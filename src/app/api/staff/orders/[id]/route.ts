@@ -32,6 +32,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: "invalid_status" }, { status: 400 });
   }
 
+  // Fetched separately (rather than relying on the update response)
+  // so we know the pre-change status for the audit log below, and so
+  // a bad order ID gets a clear 404 instead of a generic update
+  // failure.
+  let before;
+  try {
+    before = await pb.collection("orders").getOne(params.id);
+  } catch (err) {
+    return NextResponse.json({ error: "order_not_found" }, { status: 404 });
+  }
+
   let updated;
   try {
     updated = await pb.collection("orders").update(params.id, { status });
@@ -43,6 +54,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   console.log(
     `[staff/orders/${params.id}] status -> ${status} by ${staff.kind === "line" ? staff.displayName : "shared device"}`
   );
+
+  // Audit trail for the admin reports feature — best-effort, same
+  // non-blocking reasoning as the LINE push below: the status change
+  // itself already succeeded, a logging failure shouldn't undo that
+  // or be reported to staff as an error.
+  try {
+    await pb.collection("order_status_log").create({
+      order: params.id,
+      store: updated.store,
+      from_status: before.status,
+      to_status: status,
+      staff_line_user_id: staff.kind === "line" ? staff.lineUserId : "",
+      staff_display_name: staff.kind === "line" ? staff.displayName : "共有端末",
+    });
+  } catch (err) {
+    console.error(`[staff/orders/${params.id}] activity log write failed`, err);
+  }
 
   // The status change is already committed at this point — a LINE
   // push failure (expired token, rate limit, transient error) must

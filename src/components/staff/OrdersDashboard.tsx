@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { OrderSummary } from "@/types";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -38,8 +39,10 @@ interface Props {
 }
 
 export default function StaffOrdersDashboard({ authHeaders, onUnauthorized }: Props) {
+  const router = useRouter();
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [staffLabel, setStaffLabel] = useState<string | null>(null);
+  const [staffRole, setStaffRole] = useState<string | null>(null);
   const [includeDone, setIncludeDone] = useState(false);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -58,6 +61,7 @@ export default function StaffOrdersDashboard({ authHeaders, onUnauthorized }: Pr
     const all: OrderSummary[] = data.orders;
     setOrders(includeDone ? all : all.filter((o) => o.status !== "completed" && o.status !== "cancelled"));
     if (data.staff?.displayName) setStaffLabel(data.staff.displayName);
+    if (data.staff?.role) setStaffRole(data.staff.role);
     setLoading(false);
   }, [authHeaders, includeDone, onUnauthorized]);
 
@@ -94,10 +98,20 @@ export default function StaffOrdersDashboard({ authHeaders, onUnauthorized }: Pr
           <h1 className="text-lg font-bold">注文管理</h1>
           {staffLabel && <p className="text-xs text-neutral-500">ログイン中：{staffLabel}</p>}
         </div>
-        <label className="flex items-center gap-1.5 text-xs text-neutral-600">
-          <input type="checkbox" checked={includeDone} onChange={(e) => setIncludeDone(e.target.checked)} />
-          完了/キャンセルも表示
-        </label>
+        <div className="flex items-center gap-3">
+          {staffRole === "admin" && (
+            <button
+              onClick={() => router.push("/staff/liff/reports")}
+              className="text-xs font-bold text-neutral-600 underline"
+            >
+              レポート
+            </button>
+          )}
+          <label className="flex items-center gap-1.5 text-xs text-neutral-600">
+            <input type="checkbox" checked={includeDone} onChange={(e) => setIncludeDone(e.target.checked)} />
+            完了/キャンセルも表示
+          </label>
+        </div>
       </div>
 
       <div className="flex flex-col gap-3">
