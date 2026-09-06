@@ -43,7 +43,10 @@ export default function StaffOrdersPage() {
     setAuthError("コードが正しくありません。");
   }
 
-  const authHeaders = useMemo<Record<string, string>>(() => (code ? { "x-staff-code": code } : {}), [code]);
+  const authHeaders = useMemo<Record<string, string>>(
+    () => (code ? { "x-staff-code": code } : ({} as Record<string, string>)),
+    [code]
+  );
 
   if (!code) {
     return (

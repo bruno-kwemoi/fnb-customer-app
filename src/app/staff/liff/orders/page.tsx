@@ -87,7 +87,7 @@ export default function StaffLiffOrdersPage() {
   }, []);
 
   const authHeaders = useMemo<Record<string, string>>(
-    () => (state.phase === "ready" ? { "x-staff-id-token": state.idToken } : {}),
+    () => (state.phase === "ready" ? { "x-staff-id-token": state.idToken } : ({} as Record<string, string>)),
     [state]
   );
 
