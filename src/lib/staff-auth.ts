@@ -49,10 +49,20 @@ export async function resolveStaffIdentity(req: Request, pb: PocketBase): Promis
       return null;
     }
 
-    const staff = await pb
-      .collection("staffs")
-      .getFirstListItem(`line_user_id="${userId}" && active=true`)
-      .catch(() => null);
+    let staff;
+    try {
+      staff = await pb.collection("staffs").getFirstListItem(`line_user_id="${userId}" && active=true`);
+    } catch (err) {
+      // getFirstListItem throws on "no match" too (a normal, expected
+      // case — a genuinely unregistered person) — but it also throws
+      // on a malformed filter, a schema mismatch, or a connectivity
+      // problem, which look identical from here unless logged. Log
+      // the verified userId alongside it so a mismatch (right person,
+      // wrong ID format, wrong collection state, etc.) is diagnosable
+      // from Netlify's function logs instead of just "unauthorized".
+      console.error(`[staff-auth] staffs lookup failed for verified userId=${userId}`, err);
+      return null;
+    }
 
     if (!staff) return null;
 
