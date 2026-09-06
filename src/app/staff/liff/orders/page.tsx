@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getLineIdToken, getLineProfile } from "@/lib/liff";
+import { getLineIdToken, getLineProfile, withTimeout } from "@/lib/liff";
 import StaffOrdersDashboard from "@/components/staff/OrdersDashboard";
 
 // Personal LINE entry point for staff/admin — opened from LINE (via
@@ -20,15 +20,6 @@ type State =
   | { phase: "no_id_token" }
   | { phase: "error"; message: string }
   | { phase: "ready"; idToken: string };
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms — see below for likely causes.`)), ms)
-    ),
-  ]);
-}
 
 export default function StaffLiffOrdersPage() {
   const [state, setState] = useState<State>({ phase: "loading" });
