@@ -132,5 +132,35 @@ async function handleTextMessage(
           : "お客様情報が見つかりませんでした。",
       },
     ]);
+    return;
+  }
+
+  // Hidden staff/admin dashboard shortcut — deliberately invisible to
+  // everyone else. Unlike the "not registered" screen shown inside
+  // the staff LIFF app itself, this stays completely silent for a
+  // non-staff sender: no reply, no hint the keyword does anything,
+  // since this is reached from the same chat every ordinary customer
+  // uses. Registered-but-inactive staff (active=false) are treated
+  // the same as non-staff here.
+  if (text === "スタッフ" || text.toLowerCase() === "staff") {
+    const staff = await pb
+      .collection("staffs")
+      .getFirstListItem(`line_user_id="${lineUserId}" && active=true`)
+      .catch(() => null);
+
+    if (!staff) return;
+
+    const staffLiffId = process.env.NEXT_PUBLIC_STAFF_LIFF_ID;
+    if (!staffLiffId) {
+      console.error("[webhook] 'スタッフ' keyword matched but NEXT_PUBLIC_STAFF_LIFF_ID is not set");
+      return;
+    }
+
+    await pushLineMessage(channelAccessToken, lineUserId, [
+      {
+        type: "text",
+        text: `スタッフ注文管理はこちら：\nhttps://liff.line.me/${staffLiffId}/staff/liff/orders`,
+      },
+    ]);
   }
 }

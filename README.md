@@ -1,265 +1,349 @@
-# Customer-Facing LINE Ordering — F&B DX (Phase 1)
+# F&B DX — Customer & Staff LINE App
 
-Real implementation of the **Customer-Facing LINE Account** side of the
-[Feature Requirement] doc: guest ordering + loyalty, on the same stack
-as `line-retail-tool` (Next.js App Router, LIFF, PocketBase).
+A Next.js + PocketBase + LINE LIFF app for a food & beverage business:
+customers order and track orders and loyalty points from inside LINE;
+staff manage the order queue and (for admins) view sales/activity
+reports, either from a shared counter device or their own phone via
+LINE.
 
-Currently deployed standalone (Netlify + its own GitHub repo:
-`bruno-kwemoi/fnb-customer-app`) rather than merged into the
-`line-retail-tool` codebase — merge it in later if that's still the
-plan; nothing here assumes one or the other.
+Deployed standalone (Netlify + its own GitHub repo:
+`bruno-kwemoi/fnb-customer-app`), on the same general stack as
+`line-retail-tool` (Next.js App Router, LIFF, PocketBase) but not
+merged into that codebase — see "Open question" at the bottom.
 
-## What's included
+---
 
-- **Menu browsing** (`/liff/menu`) — categories + items pulled from
+## 1. Who uses what
+
+| Role | Entry point | Auth |
+|---|---|---|
+| Customer | LINE Rich Menu → `/liff/menu`, `/liff/orders`, `/liff/loyalty` | LIFF profile (`lineUserId`), not cryptographically verified — see §6 |
+| Staff (shared device) | `/staff/orders`, opened in a plain browser (e.g. a counter tablet) | One shared passcode (`STAFF_ACCESS_CODE`), no per-person identity |
+| Staff (personal) | Staff Rich Menu → `/staff/liff/orders` | LIFF ID token, verified against LINE server-side, matched to a `staffs` record |
+| Admin | Same as "Staff (personal)", plus a "レポート" link → `/staff/liff/reports` | Same LIFF ID-token verification, plus `role: "admin"` on the `staffs` record |
+
+Customers and staff can be **the same LINE account** — nothing links
+or blocks one role based on the other; see §6.
+
+---
+
+## 2. Feature reference
+
+### Customer-facing
+
+- **Menu browsing** (`/liff/menu`) — categories + items from
   PocketBase, add-to-cart with a sticky cart bar.
 - **Cart & checkout** (`/liff/cart`) — quantity editing, dine-in/takeout
-  toggle, table number capture, order submission.
+  toggle, table number capture, order submission. On success, links to
+  order tracking.
 - **Loyalty** (`/liff/loyalty`) — points balance + tier display.
-- **Order tracking** (`/liff/orders`) — customer-facing order history +
-  live status, linked from the post-checkout confirmation screen.
-  Polls `/api/customer/orders` every 8s while an order is still active
-  (pending/confirmed/preparing/ready); stops polling once everything
-  shown is completed/cancelled.
-- **Staff order dashboard** — same order list/actions UI, reachable
-  two ways (both hit the same `/api/staff/orders*` endpoints, see
-  `src/lib/staff-auth.ts` and `src/components/staff/OrdersDashboard.tsx`):
-  - `/staff/orders` — shared passcode, no per-person identity. Meant
-    for a fixed device (counter tablet) where "which shift" doesn't
-    matter.
-  - `/staff/liff/orders` — personal access from inside LINE, opened
-    via the staff Rich Menu or a shared link. The LIFF ID token is
-    verified against LINE server-side (`verifyLineIdToken` in
-    `lib/line.ts`) and matched against the `staffs` PocketBase
-    collection — real per-person identity, not a client-claimed one.
-    An unregistered LINE user sees their own userId on screen to send
-    to an admin (see `npm run add-staff` in Setup below) rather than
-    a dead end.
+- **Order tracking** (`/liff/orders`) — the customer's own order
+  history + live status. Polls `/api/customer/orders` every 8s while
+  anything shown is still active (pending/confirmed/preparing/ready).
 
-  Both list orders oldest-active-first with one-tap status advance
-  (pending → confirmed → preparing → ready → completed) and cancel,
-  polling every 6s. Advancing a status pushes a LINE message to the
-  customer (see `STATUS_MESSAGES` in `/api/staff/orders/[id]/route.ts`)
-  — a push failure never fails the status update itself, same
-  non-blocking pattern as the order confirmation push in `/api/orders`.
-- **Admin reports** (`/staff/liff/reports`) — sales (revenue, order
-  count, avg order value, points issued, unique customers, top items,
+### Staff-facing (shared UI, two entry points — see §1)
+
+Both entry points render the same `OrdersDashboard` component and hit
+the same `/api/staff/orders*` endpoints (`src/lib/staff-auth.ts`
+resolves whichever auth method was used). Both list orders
+oldest-active-first with one-tap status advance (pending → confirmed →
+preparing → ready → completed) and cancel, polling every 6s.
+
+Advancing a status:
+- Pushes a LINE message to the customer (`STATUS_MESSAGES` in
+  `/api/staff/orders/[id]/route.ts`) — non-blocking; a push failure
+  never fails the status update itself.
+- Writes a row to `order_status_log` (who, from what status, to what
+  status, when) — non-blocking, feeds the admin activity report.
+
+### Admin-facing
+
+- **Reports** (`/staff/liff/reports`) — sales (revenue, order count,
+  avg order value, points issued, unique customers, top items,
   dine-in/takeout split) and staff activity (status-change counts per
-  person) over a picked date range. Admin-only — the shared tablet
-  passcode is deliberately **not** accepted here (see
-  `/api/admin/reports/route.ts`), only LINE identity with
-  `role: "admin"` in `staffs`. A "レポート" link appears in the staff
-  dashboard header for admins only (`staffRole === "admin"` check in
-  `OrdersDashboard.tsx`); staff without that role never see it, and
-  hitting the URL directly still 401s server-side either way.
+  person), over a date range you pick each time (no smart default).
+  Gated by `role: "admin"` — the shared-device passcode is **not**
+  accepted here at all (see `/api/admin/reports/route.ts`); business
+  figures shouldn't be reachable by anyone who just knows the counter
+  passcode. The "レポート" link in the dashboard header only renders
+  for admins, and the API 401s regardless of whether you found the
+  URL directly.
 
-  Staff activity depends on a new `order_status_log` collection that
-  `PATCH /api/staff/orders/[id]` now writes to (best-effort, same
-  non-blocking pattern as the LINE push) — every status change before
-  this collection existed has no record, so reports only cover
-  activity from whenever you import the updated schema onward.
-- **Root redirect** (`/`) — resolves LIFF's `liff.state` deep-link
-  param and routes to the right page. Required by LIFF itself — see
-  Architecture notes below.
-- **Order API** (`/api/orders`) — writes the order, credits loyalty
-  points (1pt / ¥100, adjust to the client's real program), pushes a
-  LINE confirmation message.
-- **Store API** (`/api/store`) — resolves the current store's id for
-  the client, without exposing the admin-only `stores` collection.
-- **Customer API** (`/api/customer`) — same pattern, for the loyalty
-  screen's read of `customers`.
-- **Webhook** (`/api/line/webhook`) — verifies LINE's signature,
-  registers new followers as `customers` records, handles a `ポイント`
-  keyword as a fallback outside the LIFF flow. Short-circuits on empty
-  event lists (LINE's Verify-button ping) to avoid timing out.
-- **PocketBase schema** (`pocketbase/schema.json`) — `stores`,
-  `menu_categories`, `menu_items`, `customers`, `orders`.
-- **Rich Menu** (`scripts/setup-rich-menu.mjs`, `assets/rich-menu.png`)
-  — creates and registers the persistent three-button chat menu
-  (メニュー / 注文状況を確認 / ポイント確認) as the default for all
-  followers. The image is generated by
-  `scripts/generate-rich-menu-image.py` (Pillow + Noto Sans CJK) —
-  edit the panel copy/colors there and re-run it, then run
-  `npm run setup-rich-menu` to push the new image + tap areas to LINE.
-  The two files must stay in sync manually (tap area `bounds` in the
-  `.mjs` script vs. panel `x0/x1` in the `.py` script) — there's no
-  shared layout config between them yet.
-- **Seed script** (`scripts/seed.mjs`) — idempotent; creates or
-  updates one store + starter menu.
-- **Debug script** (`scripts/debug-store.mjs`) — prints the actual
-  stored `line_official_account_id` vs. what's in `.env.local`,
-  char-code comparison included, for chasing mismatches directly
-  instead of guessing.
+---
 
-## Architecture notes
+## 3. Data model
 
-**Which PocketBase collections are public vs. admin-only, and why:**
-`stores` holds the LINE channel secret and access token — never
-public. `customers` holds real names and LINE user IDs — never
-public. `orders` — never public. `menu_categories` and `menu_items`
-hold nothing sensitive and customers need to browse them with no
-login, so those two are public (List/View rules set to empty/no
-restriction).
+All collections live in one PocketBase instance, scoped by a `store`
+relation (see §5 on multi-store). `pocketbase/schema.json` is the
+source of truth — import it rather than hand-creating collections.
 
-Because `stores` and `customers` stay locked, the client can't query
-them directly — that's what `/api/store` and `/api/customer` are for:
-thin server routes that authenticate as PocketBase admin and return
-only the safe fields. If a future feature needs client-side access to
-another admin-only collection, follow this same pattern rather than
-opening that collection's rules.
+| Collection | Purpose | Public? |
+|---|---|---|
+| `stores` | LINE channel secret/token, one row per store | **Admin-only** — never expose |
+| `menu_categories` | Menu section names, sort order | Public (List/View) |
+| `menu_items` | Individual dishes, price, category | Public (List/View) |
+| `customers` | Real name, LINE user ID, loyalty points | **Admin-only** |
+| `orders` | Cart contents, status, points earned/used | **Admin-only** |
+| `staffs` | LINE user ID, display name, role (`staff`/`admin`), store, active flag | **Admin-only** |
+| `order_status_log` | Audit trail: who changed an order's status, from what, to what, when | **Admin-only** |
+
+Because `stores`/`customers`/`orders`/`staffs`/`order_status_log` stay
+locked, the client never queries them directly — every read/write goes
+through a server route authenticated as PocketBase admin
+(`getAdminPocketBase()` in `src/lib/pocketbase.ts`). If a future
+feature needs client access to another admin-only collection, follow
+this same thin-server-route pattern rather than opening that
+collection's rules.
+
+**A known PocketBase 0.22.x quirk:** a `required` number field rejects
+the literal value `0`, treating it as if it were empty — even with
+`min: 0` already enforcing non-negativity. Every number field that can
+legitimately be `0` in normal use (`loyalty_points`, `points_used`,
+`points_earned`, `subtotal`, `price`, `sort_order`) is set
+`required: false` in the schema specifically because of this. If you
+add a new number field, ask whether `0` is a valid value before
+marking it required.
+
+---
+
+## 4. API reference
+
+| Route | Method | Auth | Purpose |
+|---|---|---|---|
+| `/api/store` | GET | none (public data only) | Resolve the current store's ID for the client |
+| `/api/customer` | GET | trusts client-sent `lineUserId` (§6) | Loyalty screen data |
+| `/api/customer/orders` | GET | trusts client-sent `lineUserId` (§6) | Customer's own order history |
+| `/api/orders` | POST | trusts client-sent `lineUserId` (§6) | Place an order; self-heals a missing `customers` record; credits points; pushes LINE confirmation |
+| `/api/staff/orders` | GET | shared passcode **or** verified LINE identity | List orders for the store |
+| `/api/staff/orders/[id]` | PATCH | shared passcode **or** verified LINE identity | Change an order's status; pushes LINE update; writes audit log |
+| `/api/admin/reports` | GET | verified LINE identity **with `role: "admin"` only** | Sales + staff activity aggregates |
+| `/api/line/webhook` | POST | LINE signature verification | Registers new followers as customers (skips anyone already in `staffs`); handles a `ポイント` keyword fallback |
+
+---
+
+## 5. Architecture notes
 
 **Store resolution:** the app looks up its `stores` record by
 `LINE_OA_ID` (your stable `@botid`) rather than a PocketBase-generated
 record ID, so nothing needs copying into env vars after seeding.
 `resolveStoreId()` (client, via `/api/store`) and
-`resolveStoreIdServer()` (server, e.g. the webhook) both do this
-lookup — see `src/lib/store.ts`.
+`resolveStoreIdServer()` (server) both do this — see `src/lib/store.ts`.
+Currently **one store per deployment** — see §9 for what multi-store
+would need.
 
-**LIFF's Endpoint URL must be your domain root**, not a specific page.
-LIFF appends the requested deep-link path (`liff.state`) on top of
-whatever Endpoint URL is configured — pointing it at a subpath causes
-that path to double up and 404. `src/app/page.tsx` is what actually
-resolves `liff.state` and redirects onward; it needs to exist at `/`
-for this to work at all.
+**LIFF's Endpoint URL must be your domain root**, not a specific page,
+for *both* LIFF apps (customer and staff). LIFF appends the requested
+deep-link path on top of whatever Endpoint URL is configured —
+pointing it at a subpath causes the path to double up and 404.
 
-## Setup
+**`liff.state` and the root redirect (`src/app/page.tsx`):** when a
+LIFF link is opened outside LINE's in-app browser (a plain browser, an
+external QR scanner), LINE can't preserve the full path through its
+login redirect — it lands back on the bare Endpoint URL with the
+intended path in a `liff.state` query param instead, and it's the
+app's job to read that and route accordingly. The root page does this
+— **and critically, picks which LIFF ID to call `liff.init()` with
+based on the target path** (`/staff/...` → staff LIFF ID, everything
+else → customer LIFF ID) **before** initializing. Calling `liff.init()`
+with the wrong LIFF ID here doesn't cleanly fail — the login handshake
+just doesn't complete, which looks from the outside exactly like a
+page stuck loading forever. If you add a third LIFF app, this
+selection logic needs to grow with it.
 
-1. Copy `.env.local.example` → `.env.local` and fill it in. Read the
-   comments in that file — a couple of vars (`NEXT_PUBLIC_LINE_OA_ID`)
-   are only for the debug script, not the running app.
-2. Import `pocketbase/schema.json` into your PocketBase instance:
-   Admin UI → Settings → **Import collections** → paste the file
-   contents → Review → Confirm. (Format matches PocketBase 0.22's
-   import API. If your instance is later upgraded to 0.23+, convert to
-   the newer `fields` format before re-importing.)
-3. **Uncheck "Required" on number fields that can legitimately be `0`**
-   — `customers.loyalty_points`, `orders.points_used`,
-   `orders.points_earned`, `orders.subtotal`, `menu_items.price`,
-   `menu_categories.sort_order`, `menu_items.sort_order`. This
-   PocketBase version (0.22.x) treats `0` on a `required` number
-   field as if it were empty and rejects the write with a 400 — even
-   though `0` is a valid value with `min: 0` already enforcing
-   non-negativity. Not covered by schema import on existing
-   collections (same caveat as the API rules below) — edit each field
-   in the Admin UI directly. Hits hardest on `orders.points_used`,
-   which is currently always `0` (redemption isn't built yet) — every
-   order create will 400 until this is unchecked.
-4. **Set API rules on `menu_categories` and `menu_items`** — this step
-   is not covered by the schema import if those collections already
-   existed before you imported this schema (PocketBase import doesn't
-   retroactively update rules on existing collections). In the Admin
-   UI, open each collection's settings and set both List rule and View
-   rule to empty (public). Leave `stores`, `customers`, `orders`, and
-   `staffs` as admin-only.
-5. **Set `STAFF_ACCESS_CODE`** in `.env.local` to whatever passcode
-   staff will use at `/staff/orders`. There's no default — the
-   dashboard rejects every request if this is unset (see
-   `src/lib/staff-auth.ts`).
-6. Run `npm install`, then `npm run seed` to create the store + starter
-   menu (safe to re-run — matches by name and updates in place rather
-   than duplicating).
-7. In the LINE Developers console: set the webhook URL to
-   `https://<your-domain>/api/line/webhook` (the full path — a common
-   mistake is pointing it at just `/webhook` or the domain root). Set
-   the LIFF app's Endpoint URL to your domain root (`https://<your-domain>/`).
-8. Run `npm run setup-rich-menu` to create and publish the Rich Menu.
-   Re-run any time you edit `assets/rich-menu.png` or the tap areas in
-   the script — it replaces the existing menu rather than stacking a
-   new one.
-9. If deploying (e.g. Netlify): set every var from `.env.local` in the
-   host's environment variable settings too. Adding/changing them
-   after a build won't take effect until the next deploy — trigger one
-   manually if needed.
+**Staff auth, unified (`src/lib/staff-auth.ts`):**
+`resolveStaffIdentity()` accepts either the shared passcode
+(`x-staff-code` header) or a LIFF ID token (`x-staff-id-token`
+header), verified against LINE via `verifyLineIdToken()` in
+`src/lib/line.ts` and matched against `staffs`. Reports
+(`/api/admin/reports`) additionally require the resolved identity to
+be `kind: "line"` with `role: "admin"` — the shared-device path has no
+per-person role to check, so it's excluded entirely rather than
+treated as some default role.
+
+**Rich Menus:** two independent Rich Menus exist on the same LINE
+channel — customer (`assets/rich-menu.png`, account default,
+`scripts/setup-rich-menu.mjs`) and staff (`assets/staff-rich-menu.png`,
+linked per-person via `scripts/add-staff.mjs`, never account-default).
+Each setup script only deletes rich menus **matching its own name**
+before recreating — an earlier version of the customer script deleted
+*all* rich menus on the channel, which would have wiped out the staff
+one every time either script ran; fixed, but worth knowing if you add
+a third menu.
+
+---
+
+## 6. Known trust boundaries (read before expanding access)
+
+- **`/api/customer`, `/api/customer/orders`, `/api/orders`** all trust
+  whatever `lineUserId` the client sends — not verified against a LIFF
+  ID token. Fine for a pilot; before wider rollout, verify server-side
+  the same way the staff flow already does (`liff.getIDToken()` +
+  `verifyLineIdToken()`).
+- **The staff flow is deliberately stricter** — LIFF ID tokens are
+  verified against LINE directly, because staff actions change real
+  order state and (for admins) expose business figures. Don't
+  downgrade this to match the customer flow's convenience; if
+  anything, the customer flow should eventually be upgraded to match
+  this.
+- **One LINE account can be both a customer and staff/admin** — the
+  two roles are checked against two entirely separate collections
+  (`customers`, `staffs`) with no cross-reference. Ordering as a
+  customer never affects staff status and vice versa. LINE only shows
+  one Rich Menu per account at a time, so once someone's registered as
+  staff, their default menu becomes the staff one:
+  - **Staff → customer**: a "お客様として注文する" link in the staff
+    dashboard header (LINE identity sessions only, never shown on the
+    shared-device dashboard). Real navigation to the customer LIFF
+    app's own `liff.line.me` link, not an internal route — LIFF only
+    supports one active app session per browser tab, so an internal
+    route wouldn't actually switch context.
+  - **Customer → staff**: no UI link at all — deliberately kept out of
+    every customer-facing page. Instead, typing "スタッフ" (or
+    "staff") in the chat is a hidden keyword handled in
+    `handleTextMessage()` (`api/line/webhook/route.ts`): if the sender
+    is a registered, active staff member, they get the dashboard link
+    back as a message; if not, **nothing happens at all** — no reply,
+    no error, no hint the keyword does anything. This was a deliberate
+    choice over a visible link (even one gated by the existing "not
+    registered" screen) to keep this fully invisible on every ordinary
+    customer page rather than just safely inert.
+
+---
+
+## 7. Setup
+
+1. Copy `.env.local.example` → `.env.local` and fill it in — every var
+   is commented with what it's for and where to find it.
+2. Import `pocketbase/schema.json`: Admin UI → Settings → **Import
+   collections** → paste file contents → Review → Confirm. (Format
+   matches PocketBase 0.22's import API; convert to the newer `fields`
+   format first if your instance is on 0.23+.)
+3. **Uncheck "Required" on the number fields listed in §3** if they
+   ended up required anyway (schema import should already set this
+   correctly, but if a field pre-existed with a different setting,
+   import doesn't retroactively fix it — see the merge-rules caveat in
+   step 4).
+4. **Set List/View rules to public on `menu_categories` and
+   `menu_items`** if either already existed before this schema was
+   imported — PocketBase import doesn't retroactively update rules on
+   existing collections. Leave every other collection admin-only.
+5. **Set `STAFF_ACCESS_CODE`** in `.env.local` — the shared-device
+   dashboard rejects every request if this is unset.
+6. `npm install`, then `npm run seed` (idempotent — safe to re-run).
+7. LINE Developers console: webhook URL →
+   `https://<your-domain>/api/line/webhook` (the full path — pointing
+   it at just `/webhook` or the bare domain is a common mistake).
+   Customer LIFF app's Endpoint URL → your domain root.
+8. `npm run setup-rich-menu` to publish the customer Rich Menu. Re-run
+   after editing `assets/rich-menu.png` or the tap areas in the script
+   — it replaces rather than stacks.
+9. If deploying (e.g. Netlify): mirror every `.env.local` var into the
+   host's environment variable settings. **`NEXT_PUBLIC_*` vars are
+   baked in at build time** — adding or changing one after a build has
+   already happened does nothing until the next deploy. This has been
+   the actual root cause of several "it's still broken" moments during
+   this project — check the Deploys tab shows a *successful* build
+   *after* the env var change, not just "triggered."
 
 ### Setup: staff/admin LINE access (optional, on top of the above)
 
-The shared-passcode dashboard (`/staff/orders`) works without any of
-this. Do this only if you also want personal LINE-based access
-(`/staff/liff/orders`) — see "same OA vs. separate OA" discussion this
-was built from; this assumes the **same OA** as customers.
+The shared-passcode dashboard works without any of this — only needed
+for personal LINE-based staff/admin access. Assumes the **same LINE
+OA** as customers (see §6 for the trade-off vs. a separate OA).
 
-1. In the LINE Developers console, on the **same channel** as the
-   customer LIFF app, add a **second LIFF app**. Set its Endpoint URL
-   to `https://<your-domain>/staff/liff/orders`, and turn **ID token:
-   ON** — without this, `liff.getIDToken()` returns null client-side
-   and staff can't be verified at all.
+1. Same LINE channel as the customer LIFF app → add a **second LIFF
+   app**. Endpoint URL → your domain root (not `/staff/liff/orders` —
+   see §5). Turn **ID token: ON** and confirm the **`openid` scope**
+   is included — without both, `liff.getIDToken()` returns null and
+   staff can never be verified.
 2. Copy that LIFF app's ID into `NEXT_PUBLIC_STAFF_LIFF_ID`, and the
-   channel's numeric **Channel ID** (Basic settings tab, same page)
-   into `LINE_CHANNEL_ID`, in `.env.local`.
-3. Run `npm run setup-staff-rich-menu`, then copy the printed
-   `richMenuId` into `STAFF_RICH_MENU_ID` in `.env.local`. This
-   creates the staff Rich Menu but does **not** make it the account
-   default — customers keep seeing the regular one.
-4. Have each staff member open the staff LIFF link once (share it
-   directly — there's no button for it anywhere customer-facing yet).
-   Unregistered, they'll land on a screen showing their name and LINE
-   userId to send you.
-5. Run `npm run add-staff -- <lineUserId> "<display name>" [staff|admin]`
-   for each of them. This creates their `staffs` record and (if
-   `STAFF_RICH_MENU_ID` is set) links the staff Rich Menu to their
-   LINE account, so they see it instead of the customer menu going
-   forward.
+   channel's numeric **Channel ID** (Basic settings tab) into
+   `LINE_CHANNEL_ID`.
+3. `npm run setup-staff-rich-menu`, then copy the printed `richMenuId`
+   into `STAFF_RICH_MENU_ID`.
+4. Have each staff member open the staff LIFF link once — unregistered,
+   they land on a screen showing their name and LINE userId to send
+   you (solves the chicken-and-egg problem of needing their ID before
+   you can register them).
+5. `npm run add-staff -- <lineUserId> "<display name>" [staff|admin]`
+   for each of them.
 
-### Setup: admin reports (if you already set up staff LINE access above)
+Re-importing `pocketbase/schema.json` after this section was added is
+a plain create (new `staffs`/`order_status_log` collections), not a
+merge — the "field type cannot be changed" error only applies to
+*editing* a field on a collection that already exists.
 
-Just one step: re-import `pocketbase/schema.json` — it now also
-defines `order_status_log` (admin-only, same as `staffs`/`orders`).
-Since this is a brand-new collection rather than a change to an
-existing one, this re-import is a plain create, not a merge — the
-"field type cannot be changed" situation from earlier only applies
-when editing fields on a collection that already exists. No other
-setup needed; `role: "admin"` on an existing `staffs` record is
-enough to see the "レポート" link and reach `/staff/liff/reports`.
+---
 
-## Deliberately out of scope for this pass
+## 8. Troubleshooting (lessons already paid for once — don't re-learn them)
 
-- **Automated marketing / broadcast messages** — the doc's "automated
-  marketing" piece (segmented broadcasts, campaigns) isn't built yet —
-  flagged as a separate feature, not blocking ordering.
-- **Points redemption at checkout** — customers earn points here;
-  spending them against an order isn't wired up yet (`points_used` is
-  in the schema but always 0 for now).
+- **Generic-looking failure, no obvious cause** → check the actual
+  response body and Netlify function logs before guessing. Several
+  routes intentionally return a specific `error` code
+  (`customer_creation_failed`, `order_write_failed`, `invalid_status`,
+  etc.) precisely so this is diagnosable without re-reading source.
+- **A page hangs on "loading" forever, no error at all** → this is
+  almost never a slow network. It means something (usually
+  `liff.init()`) is neither resolving nor rejecting. `/`,
+  `/staff/liff/orders`, and `/staff/liff/reports` all wrap LIFF calls
+  in `withTimeout()` (`src/lib/liff.ts`) specifically so this surfaces
+  as a real, readable error within 10s instead of an infinite spinner
+  — if you add a new LIFF-dependent page, use the same wrapper.
+- **Netlify build fails on a TypeScript error involving a ternary that
+  returns `{}` in one branch** → TypeScript sometimes unifies both
+  branches' shapes instead of checking each against the target type
+  independently, inferring the empty-object branch as having the
+  sibling's key as `optional: undefined` rather than truly empty. Cast
+  explicitly: `... : ({} as Record<string, string>)`, don't rely on an
+  outer type annotation alone to fix it.
+- **A deploy "succeeds" per Netlify but nothing you just changed seems
+  live** → confirm it was actually a **successful build**, not a
+  failed one silently leaving the previous build serving. This
+  happened repeatedly during staff-auth development — a TypeScript
+  error blocked several deploys in a row while testing continued
+  against the stale previous version.
+- **PocketBase rejects an import with "Field type cannot be changed"**
+  → means a same-named collection already exists with an incompatible
+  shape. Don't fight the merge — check whether it's actually in use
+  (any real rows?) and if not, delete it and import fresh instead of
+  trying to reconcile field-by-field.
+
+---
+
+## 9. Deliberately out of scope for this pass
+
+- **Automated marketing / broadcast messages** — segmented broadcasts,
+  campaigns — not built, flagged as a separate feature.
+- **Points redemption at checkout** — customers earn points; spending
+  them against an order isn't wired up (`points_used` exists in the
+  schema, always `0` for now).
 - **Multi-store routing in one deployment** — `LINE_OA_ID` resolves a
-  single fixed store per deployment. Several restaurant locations
-  sharing one deployment would need per-request resolution from the
-  webhook payload's `destination` field instead — see the comment in
+  single fixed store per deployment. Multiple locations sharing one
+  deployment would need per-request resolution from the webhook
+  payload's `destination` field instead — see the comment in
   `src/app/api/line/webhook/route.ts`.
-- **LIFF session verification on `/api/customer`** — it trusts the
-  `lineUserId` the client sends rather than verifying it against the
-  LIFF ID token server-side. Fine for a pilot; worth hardening (via
-  `liff.getIDToken()` + LINE's token verify endpoint) before wider
-  rollout. `/api/customer/orders` has the same trust caveat.
-- **Staff management is CLI-only** — `/staff/liff/orders` now gives
-  real per-person identity via LINE (see the setup subsection above),
-  which fixes the "who changed this status" gap — every status update
-  is logged server-side with the staff member's name (console log
-  only, not a queryable audit table yet). But there's still no UI for
-  managing staff: adding, deactivating, or changing someone's role is
-  `npm run add-staff` from a terminal, and deactivating specifically
-  means manually flipping `active` to false in the PocketBase Admin UI
-  (the script only creates/updates, doesn't expose deactivation).
-  Fine for a small, slow-changing staff roster; wants a real admin UI
-  before it's someone non-technical's job.
+- **Customer-flow ID verification** — see §6.
+- **Staff management UI** — adding, deactivating, or changing a role
+  is `npm run add-staff` from a terminal; deactivating specifically
+  means manually flipping `active` off in the PocketBase Admin UI (the
+  script only creates/updates). Fine for a small, slow-changing
+  roster; wants a real UI before it's someone non-technical's job.
 - **Rich menu ID rotation on re-run** — `npm run setup-staff-rich-menu`
-  deletes and recreates the staff rich menu, which changes its ID.
+  deletes and recreates the staff Rich Menu, changing its ID.
   Already-registered staff silently fall back to the customer menu
   until you update `STAFF_RICH_MENU_ID` and re-run `add-staff` for
-  each of them. Noted in that script's own comments; worth a "relink
-  everyone" script if the roster grows.
-- **Realtime order updates** — both the staff dashboard and customer
-  tracking screen poll on an interval (6s / 8s) rather than subscribing
-  to PocketBase's realtime API. Simpler to reason about and works fine
-  for a pilot's order volume; the natural upgrade is a PocketBase
-  realtime subscription once there's a real staff auth collection to
-  authenticate the subscription as (the `orders` collection is
-  intentionally admin-only, so an anonymous browser client can't
-  subscribe to it directly today).
+  each of them.
+- **Realtime order updates** — both dashboards poll (6s staff / 8s
+  customer) rather than using PocketBase's realtime subscriptions. The
+  `orders` collection is intentionally admin-only, so an anonymous
+  browser client can't subscribe directly — realtime would need a real
+  staff-auth-aware subscription path.
 
 ## Open question to confirm before more building
 
-Section 4 of the feature doc asks whether to fork the resale-inventory
-codebase or run this as a multi-tenant schema in one codebase — this
-scaffold assumes the **multi-tenant** direction (a `store` relation on
-every collection), since that's what the PocketBase schema reflects.
-Worth locking that down before extending further, especially since
-it's now deployed as its own standalone repo rather than merged in.
+Whether to fork the resale-inventory codebase or run this as a
+multi-tenant schema in one codebase — this scaffold assumes
+**multi-tenant** (a `store` relation on every collection), matching
+the PocketBase schema. Worth locking down before extending further,
+especially now that it's deployed as its own standalone repo rather
+than merged into `line-retail-tool`.

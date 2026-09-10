@@ -107,6 +107,21 @@ export default function StaffOrdersDashboard({ authHeaders, onUnauthorized }: Pr
               レポート
             </button>
           )}
+          {staffLabel && (
+            // A plain internal route (router.push) would NOT correctly
+            // switch LIFF context here — LIFF only supports one active
+            // app session per browser tab, and this page is already
+            // running inside the STAFF LIFF app's session. This has to
+            // be a real navigation to the customer LIFF app's own
+            // liff.line.me link so LINE (or the root redirect handler)
+            // re-initializes as that app instead.
+            <a
+              href={`https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID}/liff/menu`}
+              className="text-xs font-bold text-neutral-600 underline"
+            >
+              お客様として注文する
+            </a>
+          )}
           <label className="flex items-center gap-1.5 text-xs text-neutral-600">
             <input type="checkbox" checked={includeDone} onChange={(e) => setIncludeDone(e.target.checked)} />
             完了/キャンセルも表示
