@@ -141,7 +141,8 @@ async function handleTextMessage(
   // non-staff sender: no reply, no hint the keyword does anything,
   // since this is reached from the same chat every ordinary customer
   // uses. Registered-but-inactive staff (active=false) are treated
-  // the same as non-staff here.
+  // the same as non-staff here. Works for both roles — role isn't
+  // checked, only active staff status.
   if (text === "スタッフ" || text.toLowerCase() === "staff") {
     const staff = await pb
       .collection("staffs")
@@ -160,6 +161,54 @@ async function handleTextMessage(
       {
         type: "text",
         text: `スタッフ注文管理はこちら：\nhttps://liff.line.me/${staffLiffId}/staff/liff/orders`,
+      },
+    ]);
+    return;
+  }
+
+  // Same pattern, one level up — reports link only for active staff
+  // whose role is specifically "admin". A non-admin staff member (or
+  // anyone else) typing this gets silence, same reasoning as above:
+  // no hint that a higher tier exists, not even an error.
+  if (text === "管理者" || text.toLowerCase() === "admin") {
+    const staff = await pb
+      .collection("staffs")
+      .getFirstListItem(`line_user_id="${lineUserId}" && active=true && role="admin"`)
+      .catch(() => null);
+
+    if (!staff) return;
+
+    const staffLiffId = process.env.NEXT_PUBLIC_STAFF_LIFF_ID;
+    if (!staffLiffId) {
+      console.error("[webhook] '管理者' keyword matched but NEXT_PUBLIC_STAFF_LIFF_ID is not set");
+      return;
+    }
+
+    await pushLineMessage(channelAccessToken, lineUserId, [
+      {
+        type: "text",
+        text: `レポートはこちら：\nhttps://liff.line.me/${staffLiffId}/staff/liff/reports`,
+      },
+    ]);
+    return;
+  }
+
+  // The one keyword open to literally everyone, including ordinary
+  // customers — there's nothing privileged about the customer
+  // ordering link, so no eligibility check is needed here. Mainly
+  // useful for staff/admin sitting in the same chat wanting a way
+  // back to ordering without the dashboard's own switcher button.
+  if (text === "お客様" || text.toLowerCase() === "customer") {
+    const liffId = process.env.NEXT_PUBLIC_LIFF_ID;
+    if (!liffId) {
+      console.error("[webhook] 'お客様' keyword matched but NEXT_PUBLIC_LIFF_ID is not set");
+      return;
+    }
+
+    await pushLineMessage(channelAccessToken, lineUserId, [
+      {
+        type: "text",
+        text: `ご注文はこちら：\nhttps://liff.line.me/${liffId}/liff/menu`,
       },
     ]);
   }

@@ -22,9 +22,11 @@
 // STORE_LINE_CHANNEL_ACCESS_TOKEN — the OA's token, needed to link
 // the staff rich menu to this person).
 //
-// Optional: STAFF_RICH_MENU_ID — if set, this script links that rich
-// menu to the new staff member so they see the staff menu instead of
-// the customer one when they open LINE. Skipped with a note if unset
+// Optional: STAFF_RICH_MENU_ID and ADMIN_RICH_MENU_ID — if set, this
+// script links the one matching the person's role, so they see the
+// right menu (2 panels for staff, 3 for admin — see
+// scripts/setup-staff-rich-menu.mjs) instead of the customer one when
+// they open LINE. Skipped with a note if the relevant one is unset
 // (nothing breaks — they can still use the staff LIFF link directly).
 
 import PocketBase from "pocketbase";
@@ -96,18 +98,19 @@ async function main() {
     console.log(`Created staff record for ${displayName} (${role}).`);
   }
 
-  const richMenuId = process.env.STAFF_RICH_MENU_ID;
+  const richMenuId = role === "admin" ? process.env.ADMIN_RICH_MENU_ID : process.env.STAFF_RICH_MENU_ID;
+  const richMenuEnvVar = role === "admin" ? "ADMIN_RICH_MENU_ID" : "STAFF_RICH_MENU_ID";
   const token = process.env.STAFF_LINE_CHANNEL_ACCESS_TOKEN;
   if (!richMenuId) {
-    console.log("STAFF_RICH_MENU_ID not set — skipping rich menu link. They can still use the staff LIFF link directly.");
+    console.log(`${richMenuEnvVar} not set — skipping rich menu link. They can still use the staff LIFF link directly.`);
     return;
   }
   if (!token) {
-    console.error("STAFF_RICH_MENU_ID is set but STAFF_LINE_CHANNEL_ACCESS_TOKEN is missing — skipping rich menu link.");
+    console.error(`${richMenuEnvVar} is set but STAFF_LINE_CHANNEL_ACCESS_TOKEN is missing — skipping rich menu link.`);
     return;
   }
 
-  console.log("Linking staff rich menu to this user...");
+  console.log(`Linking ${role} rich menu to this user...`);
   const res = await fetch(`https://api.line.me/v2/bot/user/${lineUserId}/richmenu/${richMenuId}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
@@ -116,7 +119,7 @@ async function main() {
     console.error(`Rich menu link failed (${res.status}): ${await res.text()}`);
     process.exit(1);
   }
-  console.log("Done — they'll see the staff menu next time they open LINE.");
+  console.log(`Done — they'll see the ${role} menu next time they open LINE.`);
 }
 
 main().catch((err) => {

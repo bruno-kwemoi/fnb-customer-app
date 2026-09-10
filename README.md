@@ -19,8 +19,8 @@ merged into that codebase — see "Open question" at the bottom.
 |---|---|---|
 | Customer | LINE Rich Menu → `/liff/menu`, `/liff/orders`, `/liff/loyalty` | LIFF profile (`lineUserId`), not cryptographically verified — see §6 |
 | Staff (shared device) | `/staff/orders`, opened in a plain browser (e.g. a counter tablet) | One shared passcode (`STAFF_ACCESS_CODE`), no per-person identity |
-| Staff (personal) | Staff Rich Menu → `/staff/liff/orders` | LIFF ID token, verified against LINE server-side, matched to a `staffs` record |
-| Admin | Same as "Staff (personal)", plus a "レポート" link → `/staff/liff/reports` | Same LIFF ID-token verification, plus `role: "admin"` on the `staffs` record |
+| Staff (personal) | Staff Rich Menu (2 panels) → `/staff/liff/orders` | LIFF ID token, verified against LINE server-side, matched to a `staffs` record |
+| Admin | Admin Rich Menu (3 panels — adds レポート) → `/staff/liff/orders` or `/staff/liff/reports` | Same LIFF ID-token verification, plus `role: "admin"` on the `staffs` record |
 
 Customers and staff can be **the same LINE account** — nothing links
 or blocks one role based on the other; see §6.
@@ -160,15 +160,20 @@ be `kind: "line"` with `role: "admin"` — the shared-device path has no
 per-person role to check, so it's excluded entirely rather than
 treated as some default role.
 
-**Rich Menus:** two independent Rich Menus exist on the same LINE
+**Rich Menus:** three independent Rich Menus exist on the same LINE
 channel — customer (`assets/rich-menu.png`, account default,
-`scripts/setup-rich-menu.mjs`) and staff (`assets/staff-rich-menu.png`,
-linked per-person via `scripts/add-staff.mjs`, never account-default).
-Each setup script only deletes rich menus **matching its own name**
-before recreating — an earlier version of the customer script deleted
-*all* rich menus on the channel, which would have wiped out the staff
-one every time either script ran; fixed, but worth knowing if you add
-a third menu.
+`scripts/setup-rich-menu.mjs`), staff (`assets/staff-rich-menu.png`,
+2 panels: orders + switch to customer), and admin
+(`assets/admin-rich-menu.png`, 3 panels: orders + reports + switch to
+customer). The latter two are created together by
+`scripts/setup-staff-rich-menu.mjs` and linked per-person by
+`scripts/add-staff.mjs`, which picks the right one based on the role
+you pass it — neither is ever account-default, so a customer never
+sees either regardless of role. Each setup script only deletes rich
+menus **matching its own name(s)** before recreating — an earlier
+version of the customer script deleted *all* rich menus on the
+channel, which would have wiped out the staff ones every time either
+script ran; fixed, but worth knowing if you add a fourth menu.
 
 ---
 
@@ -189,24 +194,34 @@ a third menu.
   two roles are checked against two entirely separate collections
   (`customers`, `staffs`) with no cross-reference. Ordering as a
   customer never affects staff status and vice versa. LINE only shows
-  one Rich Menu per account at a time, so once someone's registered as
-  staff, their default menu becomes the staff one:
-  - **Staff → customer**: a "お客様として注文する" link in the staff
-    dashboard header (LINE identity sessions only, never shown on the
-    shared-device dashboard). Real navigation to the customer LIFF
-    app's own `liff.line.me` link, not an internal route — LIFF only
-    supports one active app session per browser tab, so an internal
-    route wouldn't actually switch context.
-  - **Customer → staff**: no UI link at all — deliberately kept out of
-    every customer-facing page. Instead, typing "スタッフ" (or
-    "staff") in the chat is a hidden keyword handled in
-    `handleTextMessage()` (`api/line/webhook/route.ts`): if the sender
-    is a registered, active staff member, they get the dashboard link
-    back as a message; if not, **nothing happens at all** — no reply,
-    no error, no hint the keyword does anything. This was a deliberate
-    choice over a visible link (even one gated by the existing "not
-    registered" screen) to keep this fully invisible on every ordinary
-    customer page rather than just safely inert.
+  one Rich Menu per account at a time, so switching between roles
+  works two ways, layered on top of each other:
+  - **Rich Menu panels** — the staff and admin Rich Menus each include
+    an "お客様として注文する" panel (see §5), and the admin menu adds
+    a "レポート" panel. One tap, no typing.
+  - **Chat keywords** — handled in `handleTextMessage()`
+    (`api/line/webhook/route.ts`), all following the same pattern:
+    if eligible, get the relevant link back as a message; if not,
+    **nothing happens at all** — no reply, no error, no hint the
+    keyword does anything. This was a deliberate choice over a visible
+    link (even one gated by a friendly "not registered" screen) to
+    keep these fully invisible to anyone not eligible, rather than
+    just safely inert.
+    | Keyword | Who gets a reply | Links to |
+    |---|---|---|
+    | 「スタッフ」/ "staff" | Active staff (any role) | Order dashboard |
+    | 「管理者」/ "admin" | Active staff with `role: "admin"` | Reports |
+    | 「お客様」/ "customer" | Anyone, no check | Customer ordering |
+  - **The in-dashboard "お客様として注文する" link** (header of
+    `OrdersDashboard.tsx`, LINE identity sessions only) predates the
+    Rich Menu panel and chat keyword — kept as a third way to reach
+    the same place since it's zero incremental cost once built.
+
+  All of these that cross between the staff and customer LIFF apps do
+  a **real navigation** to the target app's own `liff.line.me` link,
+  never an internal route — LIFF only supports one active app session
+  per browser tab, so an internal route wouldn't actually switch
+  context.
 
 ---
 
@@ -259,8 +274,9 @@ OA** as customers (see §6 for the trade-off vs. a separate OA).
 2. Copy that LIFF app's ID into `NEXT_PUBLIC_STAFF_LIFF_ID`, and the
    channel's numeric **Channel ID** (Basic settings tab) into
    `LINE_CHANNEL_ID`.
-3. `npm run setup-staff-rich-menu`, then copy the printed `richMenuId`
-   into `STAFF_RICH_MENU_ID`.
+3. `npm run setup-staff-rich-menu` — creates **both** the staff and
+   admin Rich Menus in one run. Copy the two printed IDs into
+   `STAFF_RICH_MENU_ID` and `ADMIN_RICH_MENU_ID`.
 4. Have each staff member open the staff LIFF link once — unregistered,
    they land on a screen showing their name and LINE userId to send
    you (solves the chicken-and-egg problem of needing their ID before
@@ -329,10 +345,12 @@ merge — the "field type cannot be changed" error only applies to
   script only creates/updates). Fine for a small, slow-changing
   roster; wants a real UI before it's someone non-technical's job.
 - **Rich menu ID rotation on re-run** — `npm run setup-staff-rich-menu`
-  deletes and recreates the staff Rich Menu, changing its ID.
-  Already-registered staff silently fall back to the customer menu
-  until you update `STAFF_RICH_MENU_ID` and re-run `add-staff` for
-  each of them.
+  deletes and recreates **both** the staff and admin Rich Menus,
+  changing both IDs every time. Everyone already registered under
+  either one silently falls back to the customer menu until you update
+  both env vars and re-run `add-staff` for each of them — including
+  anyone on the admin menu, even if only the staff one logically
+  changed, since the script always does both together.
 - **Realtime order updates** — both dashboards poll (6s staff / 8s
   customer) rather than using PocketBase's realtime subscriptions. The
   `orders` collection is intentionally admin-only, so an anonymous

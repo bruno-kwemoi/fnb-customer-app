@@ -1,51 +1,77 @@
-// Creates and uploads the staff Rich Menu — unlike setup-rich-menu.mjs
-// (the customer one), this does NOT set it as the account's default
-// menu. It's linked per-person to registered staff by
-// scripts/add-staff.mjs via LINE's linkRichMenuToUser API, so a
-// customer opening the same OA never sees it.
+// Creates and uploads BOTH the staff and admin Rich Menus — unlike
+// setup-rich-menu.mjs (the customer one), neither is set as the
+// account's default menu. Each is linked per-person by
+// scripts/add-staff.mjs based on that person's role, via LINE's
+// linkRichMenuToUser API, so a customer opening the same OA never
+// sees either.
 //
 // Usage: npm run setup-staff-rich-menu
-// Then: copy the printed richMenuId into STAFF_RICH_MENU_ID in
-// .env.local, so add-staff.mjs knows which rich menu to link.
+// Then: copy the two printed richMenuIds into STAFF_RICH_MENU_ID and
+// ADMIN_RICH_MENU_ID in .env.local, so add-staff.mjs knows which rich
+// menu to link for which role.
 //
 // Required env vars (in .env.local): STAFF_LINE_CHANNEL_ACCESS_TOKEN
 // (same value as STORE_LINE_CHANNEL_ACCESS_TOKEN — the OA's token),
 // NEXT_PUBLIC_STAFF_LIFF_ID.
 //
-// Safe to re-run, BUT: re-running deletes and recreates this rich
-// menu, which changes its richMenuId — any staff already linked to
-// the old one will silently fall back to the account's default
-// (customer) menu until you update STAFF_RICH_MENU_ID and re-run
-// `npm run add-staff` for each of them. Fine while you're the only
-// staff member during setup; be aware of it once real staff are
-// registered.
+// Safe to re-run, BUT: re-running deletes and recreates both rich
+// menus, which changes their richMenuIds — anyone already linked to
+// an old one silently falls back to the account's default (customer)
+// menu until you update the env vars and re-run
+// `npm run add-staff` for each of them.
 
 import fs from "fs";
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
 const TOKEN = process.env.STAFF_LINE_CHANNEL_ACCESS_TOKEN;
-const LIFF_ID = process.env.NEXT_PUBLIC_STAFF_LIFF_ID;
+const STAFF_LIFF_ID = process.env.NEXT_PUBLIC_STAFF_LIFF_ID;
+const CUSTOMER_LIFF_ID = process.env.NEXT_PUBLIC_LIFF_ID;
 
-if (!TOKEN || !LIFF_ID) {
-  console.error("Missing STAFF_LINE_CHANNEL_ACCESS_TOKEN or NEXT_PUBLIC_STAFF_LIFF_ID in .env.local");
+if (!TOKEN || !STAFF_LIFF_ID || !CUSTOMER_LIFF_ID) {
+  console.error(
+    "Missing STAFF_LINE_CHANNEL_ACCESS_TOKEN, NEXT_PUBLIC_STAFF_LIFF_ID, or NEXT_PUBLIC_LIFF_ID in .env.local"
+  );
   process.exit(1);
 }
 
 const API = "https://api.line.me/v2/bot";
 
-const richMenuDefinition = {
-  size: { width: 2500, height: 843 },
-  selected: true,
-  name: "staff-menu",
-  chatBarText: "スタッフメニュー",
-  areas: [
-    {
-      bounds: { x: 0, y: 0, width: 2500, height: 843 },
-      action: { type: "uri", uri: `https://liff.line.me/${LIFF_ID}/staff/liff/orders` },
+const ORDERS_URI = `https://liff.line.me/${STAFF_LIFF_ID}/staff/liff/orders`;
+const REPORTS_URI = `https://liff.line.me/${STAFF_LIFF_ID}/staff/liff/reports`;
+const CUSTOMER_URI = `https://liff.line.me/${CUSTOMER_LIFF_ID}/liff/menu`;
+
+const menus = [
+  {
+    envVar: "STAFF_RICH_MENU_ID",
+    image: "staff-rich-menu.png",
+    definition: {
+      size: { width: 2500, height: 843 },
+      selected: true,
+      name: "staff-menu",
+      chatBarText: "スタッフメニュー",
+      areas: [
+        { bounds: { x: 0, y: 0, width: 1250, height: 843 }, action: { type: "uri", uri: ORDERS_URI } },
+        { bounds: { x: 1250, y: 0, width: 1250, height: 843 }, action: { type: "uri", uri: CUSTOMER_URI } },
+      ],
     },
-  ],
-};
+  },
+  {
+    envVar: "ADMIN_RICH_MENU_ID",
+    image: "admin-rich-menu.png",
+    definition: {
+      size: { width: 2500, height: 843 },
+      selected: true,
+      name: "admin-menu",
+      chatBarText: "管理者メニュー",
+      areas: [
+        { bounds: { x: 0, y: 0, width: 833, height: 843 }, action: { type: "uri", uri: ORDERS_URI } },
+        { bounds: { x: 833, y: 0, width: 834, height: 843 }, action: { type: "uri", uri: REPORTS_URI } },
+        { bounds: { x: 1667, y: 0, width: 833, height: 843 }, action: { type: "uri", uri: CUSTOMER_URI } },
+      ],
+    },
+  },
+];
 
 async function lineFetch(path, options = {}) {
   const res = await fetch(`${API}${path}`, {
@@ -59,24 +85,25 @@ async function lineFetch(path, options = {}) {
   return res.status === 204 ? null : res.json();
 }
 
-async function main() {
-  console.log("Checking for existing staff rich menus...");
+async function setupMenu({ envVar, image, definition }) {
+  console.log(`\n--- ${definition.name} ---`);
+  console.log("Checking for existing rich menu...");
   const { richmenus } = await lineFetch("/richmenu/list");
-  for (const rm of richmenus.filter((r) => r.name === richMenuDefinition.name)) {
-    console.log(`  deleting existing staff rich menu ${rm.richMenuId}`);
+  for (const rm of richmenus.filter((r) => r.name === definition.name)) {
+    console.log(`  deleting existing rich menu ${rm.richMenuId}`);
     await lineFetch(`/richmenu/${rm.richMenuId}`, { method: "DELETE" });
   }
 
-  console.log("Creating staff rich menu...");
+  console.log("Creating rich menu...");
   const { richMenuId } = await lineFetch("/richmenu", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(richMenuDefinition),
+    body: JSON.stringify(definition),
   });
   console.log(`  created ${richMenuId}`);
 
   console.log("Uploading image...");
-  const imagePath = new URL("../assets/staff-rich-menu.png", import.meta.url);
+  const imagePath = new URL(`../assets/${image}`, import.meta.url);
   const imageBuffer = fs.readFileSync(imagePath);
   const uploadRes = await fetch(`https://api-data.line.me/v2/bot/richmenu/${richMenuId}/content`, {
     method: "POST",
@@ -87,13 +114,24 @@ async function main() {
     throw new Error(`Image upload failed: ${uploadRes.status} ${await uploadRes.text()}`);
   }
   console.log("  uploaded.");
+  return { envVar, richMenuId };
+}
 
-  console.log(`\nStaff rich menu ${richMenuId} is created but NOT set as default.`);
-  console.log(`Add this to .env.local: STAFF_RICH_MENU_ID=${richMenuId}`);
-  console.log("Then run `npm run add-staff -- <lineUserId> \"<name>\" [role]` for each staff member.");
+async function main() {
+  const results = [];
+  for (const menu of menus) {
+    results.push(await setupMenu(menu));
+  }
+
+  console.log("\nBoth rich menus created (NOT set as account default). Add these to .env.local:");
+  for (const { envVar, richMenuId } of results) {
+    console.log(`${envVar}=${richMenuId}`);
+  }
+  console.log('\nThen run `npm run add-staff -- <lineUserId> "<name>" [staff|admin]` for each person —');
+  console.log("it picks the right menu automatically based on the role you pass.");
 }
 
 main().catch((err) => {
-  console.error("Staff rich menu setup failed:", err.message);
+  console.error("Rich menu setup failed:", err.message);
   process.exit(1);
 });
